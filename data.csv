@@ -1,0 +1,170 @@
+
+from __future__ import annotations
+
+import argparse
+import os
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+import matplotlib.pyplot as plt
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import inch
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Data handling helpers
+# ────────────────────────────────────────────────────────────────────────────────
+
+def read_data(csv_path: str | Path) -> pd.DataFrame:
+    """Load a CSV file into a DataFrame."""
+    df = pd.read_csv(csv_path)
+    if df.empty:
+        raise ValueError("Input file contains no rows!")
+    return df
+
+
+def describe_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    """Return descriptive statistics for numeric columns only."""
+    numeric = df.select_dtypes(include="number")
+    if numeric.empty:
+        raise ValueError("No numeric columns found to analyse.")
+    description = numeric.describe().T  # rows = columns, cols = stats
+    return description
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Plotting helpers
+# ────────────────────────────────────────────────────────────────────────────────
+
+def save_histograms(df: pd.DataFrame, output_dir: Path) -> list[Path]:
+    """Save histogram PNGs for each numeric column and return their paths."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    img_paths: list[Path] = []
+    numeric = df.select_dtypes(include="number")
+
+    for column in numeric.columns:
+        plt.figure()
+        df[column].plot(kind="hist", bins=20, title=f"Distribution of {column}")
+        plt.xlabel(column)
+        plt.ylabel("Frequency")
+        img_path = output_dir / f"{column}_hist.png"
+        plt.tight_layout()
+        plt.savefig(img_path)
+        plt.close()
+        img_paths.append(img_path)
+
+    return img_paths
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# PDF generation helpers
+# ────────────────────────────────────────────────────────────────────────────────
+
+def dataframe_to_table(data: pd.DataFrame) -> Table:
+    """Convert a DataFrame of stats to a styled ReportLab Table object."""
+    # table data with header row
+    tbl_data = [["Column", "Count", "Mean", "Std", "Min", "25%", "50%", "75%", "Max"]]
+    for idx, row in data.iterrows():
+        tbl_data.append([
+            idx,
+            f"{row['count']:.0f}",
+            f"{row['mean']:.2f}",
+            f"{row['std']:.2f}",
+            f"{row['min']:.2f}",
+            f"{row['25%']:.2f}",
+            f"{row['50%']:.2f}",
+            f"{row['75%']:.2f}",
+            f"{row['max']:.2f}",
+        ])
+
+    table = Table(tbl_data, repeatRows=1)
+    style = TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.black),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.lightgrey, colors.white]),
+    ])
+    table.setStyle(style)
+    return table
+
+
+def build_pdf(
+    output_path: Path,
+    stats: pd.DataFrame,
+    plot_paths: list[Path],
+    title: str,
+    source_file: Path,
+) -> None:
+    """Compose a PDF report using ReportLab Platypus."""
+    doc = SimpleDocTemplate(output_path, pagesize=A4)
+    styles = getSampleStyleSheet()
+    story = []
+
+    # Title and metadata
+    story.append(Paragraph(title, styles["Title"]))
+    story.append(Spacer(1, 0.1 * inch))
+    story.append(Paragraph(f"Source file: {source_file.name}", styles["Normal"]))
+    story.append(Paragraph(f"Generated on: {datetime.now():%Y-%m-%d %H:%M:%S}", styles["Normal"]))
+    story.append(Spacer(1, 0.25 * inch))
+
+    # Summary table
+    story.append(Paragraph("<b>Descriptive Statistics</b>", styles["Heading2"]))
+    story.append(dataframe_to_table(stats))
+    story.append(Spacer(1, 0.25 * inch))
+
+    # Plots
+    if plot_paths:
+        story.append(Paragraph("<b>Distributions</b>", styles["Heading2"]))
+        for p in plot_paths:
+            story.append(Image(str(p), width=5 * inch, height=3 * inch))
+            story.append(Spacer(1, 0.2 * inch))
+
+    doc.build(story)
+
+
+# ────────────────────────────────────────────────────────────────────────────────
+# Main entry point
+# ────────────────────────────────────────────────────────────────────────────────
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Generate a PDF statistical report from a CSV file.")
+    parser.add_argument("csv", help="Path to the input CSV file")
+    parser.add_argument(
+        "-o",
+        "--output",
+        default="report.pdf",
+        help="Name/path for the output PDF",
+    )
+    parser.add_argument(
+        "-t",
+        "--title",
+        default="Automated Data Report",
+        help="Custom title for the PDF report",
+    )
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_arguments()
+
+    csv_path = Path(args.csv).expanduser().resolve()
+    output_path = Path(args.output).expanduser().resolve()
+    work_dir = output_path.parent / "_plots"
+
+    df = read_data(csv_path)
+    stats = describe_numeric(df)
+    plot_paths = save_histograms(df, work_dir)
+    build_pdf(output_path, stats, plot_paths, args.title, csv_path)
+
+    print(f"✓ Report generated: {output_path}")
+
+
+if __name__ == "__main__":
+    main()
