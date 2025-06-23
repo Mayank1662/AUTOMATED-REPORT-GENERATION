@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ title }}</title>
+    <style>
+        body { font-family: Arial; margin: 2em; }
+        h1 { color: #2c3e50; }
+        .summary-table { border-collapse: collapse; width: 100%; }
+        .summary-table th, .summary-table td { border: 1px solid #ddd; padding: 8px; }
+    </style>
+</head>
+<body>
+    <h1>{{ title }}</h1>
+    <p>Below is the statistical summary of the current dataset:</p>
+    {{ summary_table | safe }}
+</body>
+</html>
